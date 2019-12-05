@@ -43,8 +43,9 @@ class AtomPredictor(pl.LightningModule):
         scope = mol_graph.scope
         for mol_idx, (st, le) in enumerate(scope):
             cur_atom_h = atom_h.narrow(0, st, len(le['atoms']))
-            cur_pair_idx = torch.tensor(pair_idx[mol_idx    ],
-                                        device=self.hparams.device)
+            cur_pair_idx = torch.tensor(pair_idx[mol_idx    ])
+            if self.on_gpu:
+                cur_pair_idx = cur_pair_idx.cuda()
             n_pairs = cur_pair_idx.size()[0]
             cur_pair_idx = cur_pair_idx.view(-1)
 
@@ -66,8 +67,10 @@ class AtomPredictor(pl.LightningModule):
         smiles_list, labels_list, path_tuple = batch
         path_input, path_mask = path_tuple
         if self.hparams.use_paths:
-            path_input = path_input.to(self.hparams.device)
-            path_mask = path_mask.to(self.hparams.device)
+            path_input = path_input
+            path_mask = path_mask
+            if self.on_gpu:
+                path_input, path_mask = path_input.cuda(), path_mask.cuda()
 
         n_data = len(smiles_list)
         mol_graph = MolGraph(smiles_list, self.hparams, path_input, path_mask)
@@ -75,7 +78,8 @@ class AtomPredictor(pl.LightningModule):
 
         pred_logits = self(
             mol_graph, atom_pairs_idx).squeeze(1)
-        labels = [torch.tensor(x, device=args.device) for x in labels]
+        labels = [torch.tensor(x) for x in labels] if not self.on_gpu else \
+                [torch.tensor(x).cuda() for x in labels]
         labels = torch.cat(labels, dim=0)
 
         all_pred_logits.append(pred_logits)

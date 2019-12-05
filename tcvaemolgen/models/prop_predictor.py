@@ -32,7 +32,12 @@ class PropPredictor(pl.LightningModule):
         hidden_size = hparams.hidden_size
 
         model = MoleculeTransformer(hparams)
+        
+        if self.on_gpu:
+            model = model.cuda()
         self.model = model
+        if self.on_gpu:
+            self.model = self.model.cuda()
 
         self.W_p_h = nn.Linear(model.output_size, hidden_size)  # Prediction
         self.W_p_o = nn.Linear(hidden_size, n_classes)
@@ -73,13 +78,18 @@ class PropPredictor(pl.LightningModule):
         smiles_list, labels_list, path_tuple = batch
         path_input, path_mask = path_tuple
         if self.hparams.use_paths:
-            path_input = path_input.to(self.hparams.device)
-            path_mask = path_mask.to(self.hparams.device)
+            path_input = path_input
+            path_mask = path_mask
+            if self.on_gpu:
+                path_input, path_mask = path_input.cuda(), path_mask.cuda()
 
         n_data = len(smiles_list)
         mol_graph = MolGraph(smiles_list, self.hparams, path_input, path_mask)
+        
         pred_logits = self(mol_graph, stats_tracker=None).squeeze(1)
-        labels = torch.tensor(labels_list, device=self.hparams.device)
+        labels = torch.tensor(labels_list)
+        if self.on_gpu:
+            labels = labels.cuda()
 
         if False:#self.hparams.loss_type == 'ce':  # memory issues
             all_pred_logits.append(pred_logits)

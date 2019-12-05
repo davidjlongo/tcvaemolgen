@@ -42,10 +42,10 @@ def get_path_input(mols, shortest_paths, max_atoms, args, output_tensor=True):
                 path_mask.append(mask_ind)
 
     if output_tensor:
-        path_input = torch.tensor(path_input, device=args.device)
+        path_input = torch.tensor(path_input)
         path_input = path_input.view(
             [batch_size, max_atoms, max_atoms, n_path_features])
-        path_mask = torch.tensor(path_mask, device=args.device)
+        path_mask = torch.tensor(path_masks)
         path_mask = path_mask.view([batch_size, max_atoms, max_atoms])
     else:
         path_input = np.stack(path_input, axis=0)
@@ -67,11 +67,11 @@ def merge_path_inputs(path_inputs, path_masks, max_atoms, args):
     padded_mask = torch.zeros(mask_shape)
 
     for idx, path_input in enumerate(path_inputs):
-        path_input = torch.Tensor(path_input,device=args.device)
+        path_input = torch.Tensor(path_input)
         n_atoms = path_input.size()[0]
         padded_path_inputs[idx, :n_atoms, :n_atoms] = path_input
 
-        path_mask = torch.Tensor(path_masks[idx],device=args.device)
+        path_mask = torch.Tensor(path_masks[idx])
         padded_mask[idx, :n_atoms, :n_atoms] = path_mask
     padded_mask = padded_mask
     return padded_path_inputs, padded_mask

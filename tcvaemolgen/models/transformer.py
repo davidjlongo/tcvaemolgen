@@ -110,13 +110,12 @@ class MoleculeTransformer(pl.LightningModule):
         input_2D = torch.cat(input_2D, dim=0)
         return input_2D
     
-    def _convert_to_3D(self, input, scope, max_atoms, device, self_attn=True):
+    def _convert_to_3D(self, input, scope, max_atoms, self_attn=True):
         """Converts the input to a 3D batch matrix
         Args:
             input: A tensor of shape [# atoms, # features]
             scope: A list of start/length indices for the molecules
             max_atoms: The maximum number of atoms for padding purposes
-            device: For creating tensors
         Returns:
             A matrix of size [batch_size, max atoms, # features]
         """
@@ -124,20 +123,33 @@ class MoleculeTransformer(pl.LightningModule):
 
         batch_input = []
         batch_mask = []
-        for st, atoms in enumerate(scope):
-            length = len(atoms)
+        for st, le in enumerate(scope):
+            length = len(le['atoms'])
             mol_input = input.narrow(0, st, length)
-
+            if self.on_gpu:
+                mol_input = mol_input.cuda()
             n_atoms = length
             n_padding = max_atoms - length
 
-            mask = torch.ones([n_atoms], device=device)
+            mask = torch.ones([n_atoms])
+            if self.on_gpu:
+                mask = mask.cuda()
 
             if n_padding > 0:
+                z_padding = torch.zeros([n_padding])
+                z_pad_feats = torch.zeros([n_padding, n_features])
+                
+                if self.on_gpu:
+                    z_padding = z_padding.cuda()
+                    z_pad_feats = z_pad_feats.cuda()
+                    
                 mask = torch.cat(
-                    [mask, torch.zeros([n_padding], device=device)])
+                    [mask.cuda(), z_padding.cuda()])
                 mol_input_padded = torch.cat(
-                    [mol_input, torch.zeros([n_padding, n_features], device=device)])
+                    [mol_input.cuda(), z_pad_feats.cuda()])
+                if self.on_gpu:
+                    mask, mol_input_padded = mask.cuda(), \
+                                             mol_input_padded.cuda()
                 batch_input.append(mol_input_padded)
             else:
                 batch_input.append(mol_input)
@@ -149,7 +161,7 @@ class MoleculeTransformer(pl.LightningModule):
             if not self_attn:
                 for i in range(max_atoms):
                     mask[i, i] = 0
-            batch_mask.append(mask)
+            batch_mask.append(mask.cuda())
 
         batch_input = torch.stack(batch_input, dim=0)
         batch_mask = torch.stack(batch_mask, dim=0).byte()
@@ -173,14 +185,21 @@ class MoleculeTransformer(pl.LightningModule):
         max_atoms = len(max(scope, key=lambda x: len(x['atoms']))['atoms'])
         
         
-        atom_input_3D, atom_mask = self._convert_to_3D(atom_input, scope, max_atoms, 
-            self.hparams.device, True) #Todo: self.hparams.self_attn
-        atom_input_3D = atom_input_3D.to(device=self.hparams.device)
-        attn_mask = atom_mask.float().to(device=self.hparams.device)
+        atom_input_3D, atom_mask = self._convert_to_3D(atom_input, 
+                                                       scope, 
+                                                       max_atoms, 
+                                                       True) #Todo: self.hparams.self_attn
+        atom_input_3D = atom_input_3D
+        attn_mask = atom_mask.float()
+        if self.on_gpu:
+            atom_input_3D = atom_input_3D.cuda()
+            attn_mask = attn_mask.cuda()
         attn_mask = attn_mask.unsqueeze(3)
 
                 
         path_input, path_mask = mol_graph.path_input, mol_graph.path_mask
+        if self.on_gpu:
+            path_input, path_mask = path_input.cuda(), path_mask.cuda()
         
         batch_sz, _, _ = atom_input_3D.size()
         n_heads, d_k = self.hparams.n_heads, self.hparams.d_k
@@ -240,12 +259,16 @@ class MoleculeTransformer(pl.LightningModule):
         smiles_list, labels_list, (path_input, path_mask) = batch
         n_data = len(smiles_list)
         mol_graph = MolGraph(smiles_list, self.hparams, path_input, path_mask)
+        if self.on_gpu:
+            mol_graph.cuda()
         self.log.debug(len(labels_list))
         atom_pairs_idx, labels = zip(*labels_list)
 
         pred_logits = atom_predictor(
             mol_graph, atom_pairs_idx, stats_tracker).squeeze(1)
-        labels = [torch.tensor(x, device=hparams.device) for x in labels]
+        labels = [torch.tensor(x) for x in labels] \
+            if not self.on_gpu else \
+                [torch.tensor(x).cuda() for x in labels]
         labels = torch.cat(labels, dim=0)
 
         all_pred_logits.append(pred_logits)

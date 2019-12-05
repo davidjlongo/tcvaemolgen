@@ -103,32 +103,7 @@ def onek_unk_encoding(x: Any, domain: Set):
         x = 'UNK'
     return [int(x == s) for s in domain]
 
-"""
-def get_atom_features(atom: Chem.rdchem.Atom, device=torch.device('cpu')):
-    #Given an atom object, returns a numpy array of features.
-    # Atom features are symbol, formal charge, degree, explicit/implicit
-    # valence, and aromaticity
-    symbol = onek_unk_encoding(atom.GetSymbol(), SYMBOLS)
-
-    if False:  # atom.is_dummy:
-        padding = [0] * (N_ATOM_FEATS - len(symbol))
-        feature_array = symbol + padding
-    else:
-        aro = [atom.GetIsAromatic()]
-        chiral = onek_unk_encoding(int(atom.GetChiralTag()), CHIRAL_TAG)
-        degree = onek_unk_encoding(atom.GetDegree(), DEGREES)
-        exp_valence = onek_unk_encoding(atom.GetExplicitValence(),
-                                        EXPLICIT_VALENCES)
-        fc = onek_unk_encoding(atom.GetFormalCharge(), FORMAL_CHARGES)
-        imp_valence = onek_unk_encoding(atom.GetImplicitValence(),
-                                        IMPLICIT_VALENCES)
-
-        feature_array = symbol + aro + chiral + degree + exp_valence + \
-            fc + imp_valence
-    return torch.Tensor(feature_array, device=device)
-    """
-
-def get_atom_features(atom, device=torch.device('cpu')):
+def get_atom_features(atom):
     """Given an atom object, returns a numpy array of features."""
     # Atom features are symbol, formal charge, degree, explicit/implicit
     # valence, and aromaticity
@@ -146,10 +121,9 @@ def get_atom_features(atom, device=torch.device('cpu')):
         aro = [atom.GetIsAromatic()]
 
         feature_array = symbol + fc + degree + exp_valence + imp_valence + aro
-    return torch.Tensor(feature_array, device=device)
+    return torch.Tensor(feature_array)
 
-def get_bond_features(bond: Chem.rdchem.Bond,
-                      bt_only: bool = False, device=torch.device('cpu')):
+def get_bond_features(bond: Chem.rdchem.Bond, bt_only: bool = False):
     """Given an bond object, returns a numpy array of features.
 
     bond can be None, in which case returns default features for a non-bond.
@@ -168,7 +142,7 @@ def get_bond_features(bond: Chem.rdchem.Bond,
         feature_array = bond_type
     else:
         feature_array = bond_type + conj + ring
-    return torch.Tensor(feature_array, device=device)
+    return torch.Tensor(feature_array)
 
 
 def get_bt_feature(bond_type: Chem.rdchem.BondType):
@@ -178,7 +152,7 @@ def get_bt_feature(bond_type: Chem.rdchem.BondType):
     return onek_unk_encoding(bond_type, BOND_TYPES)
 
 
-def get_path_bond_feature(bond: Chem.rdchem.Bond, device=torch.device('cpu')):
+def get_path_bond_feature(bond: Chem.rdchem.Bond):
     """Given a rdkit bond object, returns the bond features for that bond.
 
     When the given input is none, returns a 0-vector"""
@@ -189,9 +163,9 @@ def get_path_bond_feature(bond: Chem.rdchem.Bond, device=torch.device('cpu')):
         conj = [int(bond.GetIsConjugated())]
         ring = [int(bond.IsInRing())]
 
-        return torch.Tensor(bond_type + conj + ring, device=device)
+        return torch.Tensor(bond_type + conj + ring)
 
-def mol2tensors(mol: Chem.Mol, device=None, cliques=False):
+def mol2tensors(mol: Chem.Mol, cliques=False):
     if mol is None:
         return None, None
     
@@ -201,13 +175,12 @@ def mol2tensors(mol: Chem.Mol, device=None, cliques=False):
     if cliques:
         cliques, edges = tree_decomp(mol)
         n_cliques = len(cliques)
-        nodes = torch.zeros((n_cliques,N_ATOM_FEATS), device=device)
+        nodes = torch.zeros((n_cliques,N_ATOM_FEATS))
     
         for i, clique in enumerate(cliques):
             print(f'Clique {i}')
             cmol = get_clique_mol(mol, clique)
-            nodes[i] = torch.Tensor(get_atom_features(cmol), 
-                                          device=device)
+            nodes[i] = torch.Tensor(get_atom_features(cmol))
             csmiles = get_smiles(cmol)
             nodes_dict[i] = dict(
                 smiles=csmiles,
@@ -222,14 +195,13 @@ def mol2tensors(mol: Chem.Mol, device=None, cliques=False):
                 nodes_dict[root][attr], nodes_dict[0][attr]
                 
         edge_index = torch.zeros((n_edges * 2,2), 
-                                 dtype=torch.long, 
-                                 device=device)
+                                 dtype=torch.long)
         
         for  i, (_x, _y) in zip(itertools.count(), edges):
             x = 0 if _x == root else root if _x == 0 else _x
             y = 0 if _y == root else root if _y == 0 else _y
-            edge_index[2*i] = torch.LongTensor([x, y], device=device)
-            edge_index[2*i+1] = torch.LongTensor([y, x], device=device)
+            edge_index[2*i] = torch.LongTensor([x, y])
+            edge_index[2*i+1] = torch.LongTensor([y, x])
             nodes_dict[x]['clique'].append(y)
             nodes_dict[y]['clique'].append(x)        
             
@@ -237,16 +209,13 @@ def mol2tensors(mol: Chem.Mol, device=None, cliques=False):
         n_nodes = mol.GetNumAtoms()
         n_edges = mol.GetNumBonds()
         nodes = torch.zeros((n_nodes,N_ATOM_FEATS), 
-                        device=device, 
                         dtype=torch.float64)
         for i, rd_atom in enumerate(mol.GetAtoms()):
-            nodes[i] = get_atom_features(rd_atom).to(device=device)
+            nodes[i] = get_atom_features(rd_atom)
             
         edge_index = torch.zeros((n_edges * 2,2), 
-                                 device=device, 
                                  dtype=torch.long)
-        edge_attr = torch.zeros((n_edges * 2,N_BOND_FEATS), 
-                                device=device,
+        edge_attr = torch.zeros((n_edges * 2,N_BOND_FEATS),
                                 dtype=torch.float64)
         
         for  i, bond in zip(itertools.count(), mol.GetBonds()):
@@ -254,9 +223,9 @@ def mol2tensors(mol: Chem.Mol, device=None, cliques=False):
             _y = bond.GetEndAtom().GetIdx()
             x = 0 if _x == root else root if _x == 0 else _x
             y = 0 if _y == root else root if _y == 0 else _y
-            edge_index[2*i] = torch.LongTensor([x, y], device=device)
-            edge_index[2*i+1] = torch.LongTensor([y, x], device=device)
-            edge_attr[2*i] = get_bond_features(bond, device=device)
+            edge_index[2*i] = torch.LongTensor([x, y])
+            edge_index[2*i+1] = torch.LongTensor([y, x])
+            edge_attr[2*i] = get_bond_features(bond)
             edge_attr[2*i+1] = edge_attr[2*i].clone()  
             
     

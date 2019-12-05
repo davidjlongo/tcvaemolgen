@@ -69,13 +69,15 @@ log.addHandler(c_handler)
 def main(hparams):
     # init module
     model = PropPredictor(hparams, n_classes=1)
+    
     load_shortest_paths(hparams)
     #model.half()
 
     # most basic trainer, uses good defaults
     trainer = Trainer(
+        distributed_backend='dp',
         max_nb_epochs=hparams.max_nb_epochs,
-        gpus=hparams.gpus,
+        gpus=-1,
         nb_gpu_nodes=hparams.nodes,
     )
     trainer.fit(model)
@@ -83,11 +85,6 @@ def main(hparams):
 
 
 if __name__ == '__main__':
-    def str2device(string):
-        if string == 'cpu':
-            return torch.device('cpu')
-        if string == 'cuda':
-            return torch.device('cuda')
 
     # log something (this will be sent to the Application Insights service as a trace)
     log.debug('This is a message')
@@ -103,7 +100,6 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on validation set')
     parser.add_argument('--gpus', type=str, default=None)
-    parser.add_argument('--device', type=str2device, default=torch.device('cpu'))
     parser.add_argument('--nodes', type=int, default=1)
     parser.add_argument('--save-path', metavar='DIR', default=".", type=str,
                         help='path to save output')

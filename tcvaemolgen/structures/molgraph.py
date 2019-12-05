@@ -37,12 +37,13 @@ class MolGraph(Data):
                  smiles_list: List[str], 
                  hparams, 
                  path_input=None,
-                 path_mask=None):
+                 path_mask=None,
+                 on_gpu:bool=True):
         if smiles_list is None:
             return
         
-        self.device = hparams.device
         self.hparams = hparams
+        self.on_gpu = on_gpu
         self.smiles_list = smiles_list
         
         self.mols : List[Data] = []
@@ -75,7 +76,10 @@ class MolGraph(Data):
             rd_mol = Chem.MolFromSmiles(smiles)
             self.rd_mols.append(rd_mol)
             
-            atoms, bonds, attr = mol2tensors(rd_mol, self.hparams.device)
+            atoms, bonds, attr = mol2tensors(rd_mol)
+            if self.on_gpu:
+                atoms, bonds, attr = \
+                    atoms.cuda(), bonds.cuda(), attr.cuda()
 
             graph_atoms = torch.cat((graph_atoms, atoms), 0) \
                             if graph_atoms is not None else atoms
@@ -84,6 +88,10 @@ class MolGraph(Data):
                             if graph_bonds is not None else bonds
             graph_attr = torch.cat((graph_attr, attr), 0) \
                             if graph_attr is not None else attr
+                            
+            if self.on_gpu:
+                graph_atoms, graph_bonds, graph_attr = \
+                    graph_atoms.cuda(), graph_bonds.cuda(), graph_attr.cuda()
 
             self.mols.append(dict({
                 'atoms':atoms, 
@@ -98,12 +106,14 @@ class MolGraph(Data):
         for mol_idx, mol in enumerate(self.mols):
             atoms = self.rd_mols[mol_idx]
             for atom_idx, atom in enumerate(atoms.GetAtoms()):
-                atom_features = get_atom_features(atom, self.hparams.device)
+                atom_features = get_atom_features(atom)
                 fatoms.append(atom_features)
         
         fatoms = np.stack(fatoms, axis=0)
         if output_tensors:
-            fatoms = torch.tensor(fatoms, device=self.device).float()
+            fatoms = torch.tensor(fatoms).float()
+            if self.on_gpu:
+                fatoms = fatoms.cuda()
         return fatoms, self.mols
     
     def get_graph_inputs(self):
@@ -119,15 +129,15 @@ class MolGraph(Data):
             cur_bgraph = np.zeros([len(bonds), max_neighbors])
 
             for atom_idx, atom in enumerate(atoms):
-                atom_features = mol_features.get_atom_features(atom, self.hparams.device)
+                atom_features = mol_features.get_atom_features(atom)
                 fatoms.append(atom_features)
                 for nei_idx, bond in enumerate(atom.bonds):
                     cur_agraph[atom.idx, nei_idx] = bond.idx + b_offset
             for bond in bonds:
                 out_atom = atoms[bond.out_atom_idx]
                 bond_features = np.concatenate([
-                    mol_features.get_atom_features(out_atom, self.hparams.device),
-                    mol_features.get_bond_features(bond, self.hparams.device)], axis=0)
+                    mol_features.get_atom_features(out_atom),
+                    mol_features.get_bond_features(bond)], axis=0)
                 fbonds.append(bond_features)
                 for i, in_bond in enumerate(out_atom.bonds):
                     if bonds[in_bond.idx].out_atom_idx != bond.in_atom_idx:
@@ -137,14 +147,16 @@ class MolGraph(Data):
             bgraph.append(cur_bgraph)
             b_offset += len(bonds)
 
-        fatoms = torch.tensor(np.stack(fatoms, axis=0), 
-                              device=self.device).float()
-        fbonds = torch.tensor(np.stack(fbonds, axis=0), 
-                              device=self.device).float()
-        agraph = torch.tensor(np.concatenate(agraph, axis=0), 
-                              device=self.device).long()
-        bgraph = torch.tensor(np.concatenate(bgraph, axis=0), 
-                              device=self.device).long()
+        fatoms = torch.tensor(np.stack(fatoms, axis=0)).float()
+        fbonds = torch.tensor(np.stack(fbonds, axis=0)).float()
+        agraph = torch.tensor(np.concatenate(agraph, axis=0)).long()
+        bgraph = torch.tensor(np.concatenate(bgraph, axis=0)).long()
+        
+        if self.on_gpu:
+            fatoms = fatoms.cuda()
+            fbonds = fbonds.cuda()
+            agraph = agraph.cuda()
+            bgraph = bgraph.cuda()
 
         graph_inputs = [fatoms, fbonds, agraph, bgraph]
         return (graph_inputs, self.scope)
