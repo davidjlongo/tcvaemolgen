@@ -157,5 +157,5 @@ lightning_logs/*
 */*/*/*/shortest_paths.p
 */*/*/*/*/shortest_paths.p
 
+data/01_raw/*
 *.csv
-*.txt
