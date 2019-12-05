@@ -1,0 +1,79 @@
+FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu16.04
+
+LABEL maintainer="longodj <longodj@gmail.com>"
+
+SHELL [ "/bin/bash", "-c" ]
+
+COPY requirements.system /tmp/requirements.system
+
+RUN apt-get update --fix-missing && \
+    apt-get install -y wget bzip2 curl git && \
+    apt-get clean && \
+    cat /tmp/requirements.system | xargs apt-get install -y && \
+	  rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+ARG username=icarus
+ARG uid=1000
+ARG gid=100
+ENV USER ${username}
+ENV UID ${uid}
+ENV GID ${gid}
+ENV HOME /home/$USER
+
+RUN adduser --disabled-password \
+    --gecos "Non-root user" \
+    --uid $UID \
+    --gid $GID \
+    --home $HOME \
+    $USER
+
+# Dockerhub not yet supporting COPY --chown $UID:$GID syntax
+COPY environment.yml /tmp/environment.yml
+RUN chown $UID:$GID /tmp/environment.yml
+
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chown $UID:$GID /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
+
+#COPY dgl /tmp/dgl
+#RUN chown -R $UID:$GID /tmp/dgl
+
+# install Miniconda as non-root user
+#RUN chown $UID:$GID $HOME/app/__init__.py
+
+USER $USER
+
+ENV MINICONDA_VERSION latest
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${MINICONDA_VERSION}-Linux-x86_64.sh -O ~/miniconda.sh && \
+    chmod +x ~/miniconda.sh && \
+    ~/miniconda.sh -b && \
+    rm ~/miniconda.sh && \
+    echo ". ${HOME}/miniconda3/etc/profile.d/conda.sh" >> ~/.profile
+
+RUN mkdir $HOME/app
+WORKDIR $HOME/app
+COPY __init__.py $HOME/app/__init__.py
+
+RUN ~/miniconda3/bin/conda update --name base --channel defaults conda && \
+    ~/miniconda3/bin/conda env create --prefix ./env --file /tmp/environment.yml && \
+    ~/miniconda3/bin/conda clean --all --yes
+
+USER 0
+
+RUN apt-get remove -y \
+        cuda-nvml-dev-$CUDA_PKG_VERSION \
+        cuda-command-line-tools-$CUDA_PKG_VERSION \
+	cuda-libraries-dev-$CUDA_PKG_VERSION \
+        cuda-minimal-build-$CUDA_PKG_VERSION \
+        libnccl-dev=$NCCL_VERSION-1+cuda10.1
+
+USER $USER
+
+#WORKDIR $HOME/app
+
+# use an entrypoint script to insure conda environment is properly activated at runtime
+ENTRYPOINT [ "/usr/local/bin/docker-entrypoint.sh" ]
+
+# default command will be to launch JupyterLab server for development
+CMD [ "jupyter", "lab", "--no-browser", "--ip", "0.0.0.0" ]

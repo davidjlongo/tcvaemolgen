@@ -1,0 +1,11 @@
+{
+    "python.pythonPath": "/home/icarus/anaconda3/envs/tcvaemolgen/bin/python",
+    "python.dataScience.jupyterServerURI": "http://localhost:8888/?token=2f5581c7baf8d76c47bc4813caf451adad9e570c2c315f47",
+    "python.formatting.autopep8Path": "/home/icarus/anaconda3/envs/tcvaemolgen/bin/autopep8",
+    "python.testing.pytestArgs": [
+        "."
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.nosetestsEnabled": false,
+    "python.testing.pytestEnabled": true
+}
