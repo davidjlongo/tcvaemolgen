@@ -1,9 +1,12 @@
 import torch
+import logging
 import numpy as np
 import rdkit.Chem as Chem
 
 import structures.mol_features as mol_features
 import pdb
+
+module_log = logging.getLogger('tcvaemolgen.utils.path_utils')
 
 
 def ordered_pair(a1, a2):
@@ -13,8 +16,11 @@ def ordered_pair(a1, a2):
         return (a1, a2)
 
 
-def get_path_input(mols, shortest_paths, max_atoms, args, output_tensor=True):
-    batch_size, max_path_length = len(shortest_paths), args.max_path_length
+def get_path_input(mols, shortest_paths, max_atoms, args=None, output_tensor=True):
+    if args is not None:
+        batch_size, max_path_length = len(shortest_paths), args.max_path_length
+    else:
+        batch_size, max_path_length = len(shortest_paths), 3
     n_path_features = get_num_path_features(args)
 
     path_input = []
@@ -45,7 +51,7 @@ def get_path_input(mols, shortest_paths, max_atoms, args, output_tensor=True):
         path_input = torch.tensor(path_input)
         path_input = path_input.view(
             [batch_size, max_atoms, max_atoms, n_path_features])
-        path_mask = torch.tensor(path_masks)
+        path_mask = torch.tensor(path_mask)
         path_mask = path_mask.view([batch_size, max_atoms, max_atoms])
     else:
         path_input = np.stack(path_input, axis=0)
@@ -56,9 +62,16 @@ def get_path_input(mols, shortest_paths, max_atoms, args, output_tensor=True):
     return path_input, path_mask
 
 
-def merge_path_inputs(path_inputs, path_masks, max_atoms, args):
+def merge_path_inputs(path_inputs, path_masks, max_atoms, args=None):
     """Merge path input matrices. Does not create CUDA tensors intentionally"""
-    batch_size, max_path_length = len(path_inputs), args.max_path_length
+    if args is not None:
+        batch_size, max_path_length = len(path_inputs), args.max_path_length
+    else:
+        batch_size, max_path_length = len(path_inputs), 3
+    module_log.debug('Merge_path_inputs')
+    module_log.debug('-----------------')
+    
+
     num_features = get_num_path_features(args)
     feature_shape = [batch_size, max_atoms, max_atoms, num_features]
     mask_shape = [batch_size, max_atoms, max_atoms]
@@ -67,23 +80,31 @@ def merge_path_inputs(path_inputs, path_masks, max_atoms, args):
     padded_mask = torch.zeros(mask_shape)
 
     for idx, path_input in enumerate(path_inputs):
-        path_input = torch.Tensor(path_input)
+        path_input = path_input.squeeze(0)
+        #if type(path_input) is not torch.Tensor:
+        #    path_input = torch.Tensor(path_input)
         n_atoms = path_input.size()[0]
         padded_path_inputs[idx, :n_atoms, :n_atoms] = path_input
-
-        path_mask = torch.Tensor(path_masks[idx])
+        path_mask_idx = path_masks[idx].squeeze(0)
+        path_mask = torch.Tensor(path_mask_idx.float())
         padded_mask[idx, :n_atoms, :n_atoms] = path_mask
     padded_mask = padded_mask
     return padded_path_inputs, padded_mask
 
 
-def get_num_path_features(args):
+def get_num_path_features(args=None):
     """Returns the number of path features for the model."""
-    num_features = 0
-    num_features = args.max_path_length * mol_features.N_BOND_FEATS
-    if args.p_embed:
-        num_features += args.max_path_length + 2
-    if args.ring_embed:
+    num_features = mol_features.N_BOND_FEATS
+    if args is not None:
+        num_features *= args.max_path_length 
+    else:
+        num_features *= 3
+    if True:#args.p_embed:
+        if args is not None:
+            num_features += args.max_path_length + 2
+        else:
+            num_features += 3 + 2
+    if True:#args.ring_embed:
         n_ring_feats = 1  # Same ring membership
         n_ring_feats += 4  # Same ring non/aromatic 5 or 6
         num_features += n_ring_feats

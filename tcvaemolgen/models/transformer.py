@@ -125,7 +125,7 @@ class MoleculeTransformer(pl.LightningModule):
         batch_mask = []
         for st, le in enumerate(scope):
             length = len(le['atoms'])
-            mol_input = input.narrow(0, st, length)
+            mol_input = input.narrow(0, st, length).cuda()
             if self.on_gpu:
                 mol_input = mol_input.cuda()
             n_atoms = length
@@ -144,9 +144,9 @@ class MoleculeTransformer(pl.LightningModule):
                     z_pad_feats = z_pad_feats.cuda()
                     
                 mask = torch.cat(
-                    [mask.cuda(), z_padding.cuda()])
+                    [mask.cuda(), z_padding.cuda()]).cuda()
                 mol_input_padded = torch.cat(
-                    [mol_input.cuda(), z_pad_feats.cuda()])
+                    [mol_input.cuda(), z_pad_feats.cuda()]).cuda()
                 if self.on_gpu:
                     mask, mol_input_padded = mask.cuda(), \
                                              mol_input_padded.cuda()
@@ -170,12 +170,17 @@ class MoleculeTransformer(pl.LightningModule):
     def _get_attn_input(self, atom_h, path_input, max_atoms):
         # attn_input is concatentation of atom pair embeddings and path input
         atom_h1 = atom_h.unsqueeze(2).expand(-1, -1, max_atoms, -1)
-        self.log.debug(f'Atom_h1: {atom_h1.shape}')
+        #self.log.debug(f'Atom_h1: {atom_h1.shape}')
         atom_h2 = atom_h.unsqueeze(1).expand(-1, max_atoms, -1, -1)
-        self.log.debug(f'Atom_h2: {atom_h2.shape}')
+        #self.log.debug(f'Atom_h2: {atom_h2.shape}')
         atom_pairs_h = torch.cat([atom_h1, atom_h2], dim=3)
-        self.log.debug(atom_pairs_h.size())
-        self.log.debug(path_input.size())
+        #self.log.debug(atom_pairs_h.size())
+        #self.log.debug(path_input.size())
+        if self.on_gpu:
+            atom_pairs_h = atom_pairs_h.cuda()
+            path_input = path_input.cuda()
+        #print(f'pairs: {atom_pairs_h.shape}')
+        #print(f'input: {path_input.shape}')
         attn_input = torch.cat([atom_pairs_h, path_input], dim=3)
 
         return attn_input
@@ -244,10 +249,13 @@ class MoleculeTransformer(pl.LightningModule):
         atom_h = atom_h.permute(1, 2, 0, 3).contiguous().view(batch_sz, max_atoms, -1)
 
         atom_h = self._convert_to_2D(atom_h, scope)
-        self.log.debug("converting to 2D")
-        self.log.debug(atom_input.shape)
-        self.log.debug(atom_h.shape)
-        atom_output = torch.cat([atom_input, atom_h], dim=1)
+        #self.log.debug("converting to 2D")
+        #self.log.debug(atom_input.shape)
+        #self.log.debug(atom_h.shape)
+        if self.on_gpu:
+            atom_input = atom_input.cuda()
+            atom_h = atom_h.cuda()
+        atom_output = torch.cat([atom_input.cuda(), atom_h.cuda()], dim=1).cuda()
         self.log.debug(atom_output.shape)
         atom_out = self.W_atom_o(atom_output)
         atom_h = nn.ReLU()(atom_out)
@@ -256,9 +264,13 @@ class MoleculeTransformer(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         # REQUIRED
+        start, end = (batch_idx*batch_size, batch_idx*batch_size+batch_size)
         smiles_list, labels_list, (path_input, path_mask) = batch
+        print(f'shape: {path_input.shape}')
+        print(f'shape: {path_input[start:end].shape}')
         n_data = len(smiles_list)
-        mol_graph = MolGraph(smiles_list, self.hparams, path_input, path_mask)
+        mol_graph = MolGraph(smiles_list, self.hparams, 
+                             path_input[start:end], path_mask[start:end])
         if self.on_gpu:
             mol_graph.cuda()
         self.log.debug(len(labels_list))

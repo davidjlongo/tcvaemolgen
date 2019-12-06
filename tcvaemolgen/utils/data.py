@@ -44,7 +44,7 @@ def read_smiles_from_file(data_path):
 
     data_file = open(data_path, 'r')
     for line in data_file.readlines():
-        smiles, label = line.strip().split(',')
+        smiles, label = line.strip().split(',')[0:2]
         smiles_data.append((smiles, float(label)))
     data_file.close()
     return smiles_data
@@ -100,5 +100,14 @@ def load_shortest_paths(args):
         args.p_info = shortest_paths  # p info can also include rank information
 
         print('Shortest Paths loaded')
+
+def write_props(write_file, smiles_list, labels_list, preds_list):
+    with open(write_file, 'w+') as f:
+        for idx in range(len(smiles_list)):
+            smiles = smiles_list[idx]
+            label = labels_list[idx]
+            pred = preds_list[idx]
+        
+            f.write('%s,%s,%s\n' % (smiles, str(label), str(pred)))
 
 

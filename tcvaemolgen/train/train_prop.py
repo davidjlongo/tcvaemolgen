@@ -4,12 +4,14 @@ This file runs the main training/val loop, etc... using Lightning Trainer
 import hashlib
 import logging
 import numpy as np
+import os
 import time
 import torch
 from applicationinsights import channel
 from applicationinsights.logging import LoggingHandler
 
 from pytorch_lightning import Trainer
+from pytorch_lightning.logging import CometLogger
 from argparse import ArgumentParser
 
 from tcvaemolgen.models.prop_predictor import PropPredictor
@@ -54,7 +56,7 @@ c_handler.setFormatter(
     logging.Formatter('%(name)s - %(levelname)s: %(message)s')
 )
 log = logging.getLogger('molgen')
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.ERROR)
 log.addHandler(az_handler)
 log.addHandler(f_handler)
 log.addHandler(c_handler)
@@ -72,15 +74,29 @@ def main(hparams):
     
     load_shortest_paths(hparams)
     #model.half()
+    
+    comet_logger = CometLogger(
+        api_key=os.environ["COMET_KEY"],
+        project_name="tcvaemolgen",
+        workspace=os.environ["COMET_WKSP"],
+    )
 
     # most basic trainer, uses good defaults
     trainer = Trainer(
-        distributed_backend='dp',
-        max_nb_epochs=hparams.max_nb_epochs,
-        gpus=-1,
-        nb_gpu_nodes=hparams.nodes,
+        check_val_every_n_epoch=1,
+        default_save_path='data/05_model_outputs',
+        distributed_backend=hparams.distributed_backend,
+        #max_nb_epochs=hparams.max_nb_epochs,
+        gpus=hparams.gpus,
+        #nb_gpu_nodes=hparams.nodes,
+        logger=comet_logger,
+        log_save_interval=100,
+        row_log_interval=10,
+        show_progress_bar=True,
     )
     trainer.fit(model)
+    
+    trainer.test()
     return
 
 

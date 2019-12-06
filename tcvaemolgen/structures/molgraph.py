@@ -19,6 +19,7 @@ from .mol_features import get_atom_features, get_bond_features, mol2tensors, \
 from .vocab import Vocab
 
 module_log = logging.getLogger('tcvaemolgen.molgraph')
+module_log.setLevel(logging.ERROR)
 
 """ MolGraph
 
