@@ -17,6 +17,8 @@ from argparse import ArgumentParser
 from tcvaemolgen.models.prop_predictor import PropPredictor
 from tcvaemolgen.utils.data import load_shortest_paths
 
+from tcvaemolgen.utils.data import read_smiles_multiclass
+
 SEED = 2334
 torch.manual_seed(SEED)
 np.random.seed(SEED)
@@ -70,7 +72,10 @@ log.addHandler(c_handler)
 
 def main(hparams):
     # init module
-    model = PropPredictor(hparams, n_classes=1)
+    raw_data = read_smiles_multiclass('%s/raw.csv' % hparams.data)
+    n_classes = len(raw_data[0][1])
+    model = PropPredictor(hparams, n_classes=n_classes)
+    model.version = hparams.dataset
     
     load_shortest_paths(hparams)
     #model.half()
@@ -78,34 +83,35 @@ def main(hparams):
     comet_logger = CometLogger(
         api_key=os.environ["COMET_KEY"],
         project_name="tcvaemolgen",
-        workspace=os.environ["COMET_WKSP"],
+        workspace=os.environ["COMET_WKSP"]
     )
 
     # most basic trainer, uses good defaults
     trainer = Trainer(
         check_val_every_n_epoch=1,
-        default_save_path='data/05_model_outputs',
+        default_save_path=f'data/05_model_outputs/{hparams.dataset}',
         distributed_backend=hparams.distributed_backend,
-        #max_nb_epochs=hparams.max_nb_epochs,
+        max_nb_epochs=hparams.max_nb_epochs,
+        #.arly_stop_callback=None,
         gpus=hparams.gpus,
-        #nb_gpu_nodes=hparams.nodes,
+        gradient_clip_val=10,
+        nb_gpu_nodes=hparams.nodes,
         logger=comet_logger,
         log_save_interval=100,
-        row_log_interval=10,
+        row_log_interval=10,    
         show_progress_bar=True,
+        track_grad_norm=2
     )
-    trainer.fit(model)
+    for round_idx in range(hparams.n_rounds):
+        model.split_idx = round_idx
+        log.info(f'Split {round_idx}')
+        trainer.fit(model)
     
     trainer.test()
     return
 
 
 if __name__ == '__main__':
-
-    # log something (this will be sent to the Application Insights service as a trace)
-    log.debug('This is a message')
-    log.error('This is an error')
-
     # logging shutdown will cause a flush of all un-sent telemetry items
     # alternatively flush manually via handler.flush()
     logging.shutdown()
@@ -117,10 +123,12 @@ if __name__ == '__main__':
                         help='evaluate model on validation set')
     parser.add_argument('--gpus', type=str, default=None)
     parser.add_argument('--nodes', type=int, default=1)
+    parser.add_argument('--n_classes',type=int,default=1)
     parser.add_argument('--save-path', metavar='DIR', default=".", type=str,
                         help='path to save output')
     parser.add_argument('--use-paths', default=True, type=bool)
     parser.add_argument('--self_attn', default=True, type=bool)
+    parser.add_argument('--dataset', default=None, type=str)
     parser.add_argument('--use-16bit', dest='use-16bit', action='store_true',
                         help='if true uses 16 bit precision')
 

@@ -1,13 +1,14 @@
+import collections
 import rdkit.Chem as Chem
 import torch.utils.data as data
 
 from utils import path_utils
 import pdb
 
-
 class MolDataset(data.Dataset):
     def __init__(self, raw_data, split_indices, args):
         self.args = args
+        self.cache = collections.defaultdict()
 
         if split_indices is not None:
             data = []
@@ -19,7 +20,12 @@ class MolDataset(data.Dataset):
 
     def __getitem__(self, index):
         smiles, label = self.data[index]
-        mol = Chem.MolFromSmiles(smiles)
+        try:
+            mol = self.cache[smiles]
+        except KeyError:
+            mol = Chem.MolFromSmiles(smiles)
+            self.cache[smiles] = mol
+            
         n_atoms = mol.GetNumAtoms()
 
         path_input = None
@@ -54,7 +60,7 @@ def combine_data(data):
     return batch_smiles, batch_labels, (batch_path_inputs, batch_path_mask)
 
 def get_loader(raw_data, split_indices, args, sampler=None, shuffle=False,
-               num_workers=5, batch_size=0):
+               num_workers=5, batch_size=0):    
     mol_dataset = MolDataset(raw_data, split_indices, args)
 
     if batch_size == 0:

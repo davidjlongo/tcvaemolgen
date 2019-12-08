@@ -1,6 +1,8 @@
 import hashlib
 import logging
+import numpy as np
 import os
+import sklearn.metrics as metrics
 import time
 import torch
 import torch.nn as nn
@@ -18,7 +20,7 @@ from tcvaemolgen.datasets.mol_dataset import get_loader
 from tcvaemolgen.models.transformer import MoleculeTransformer
 from tcvaemolgen.structures import MolGraph, MolTree
 from tcvaemolgen.structures import mol_features
-from tcvaemolgen.utils.data import read_smiles_from_file, \
+from tcvaemolgen.utils.data import read_smiles_from_file, read_smiles_multiclass,\
                                 read_splits, write_props
 
 import pdb
@@ -32,9 +34,11 @@ class PropPredictor(pl.LightningModule):
         log.debug('Entering PropPredictor')
         self.log =  log
         self.hparams = hparams
+        print(f'LOSS_TYPE: {self.hparams.loss_type}')
         hidden_size = hparams.hidden_size
-
+        self.n_classes = n_classes
         model = MoleculeTransformer(hparams)
+        self.all_pred_logits, self.all_labels = [], []
         
         if self.on_gpu:
             model = model.cuda()
@@ -45,7 +49,7 @@ class PropPredictor(pl.LightningModule):
         self.W_p_h = nn.Linear(model.output_size, hidden_size)  # Prediction
         self.W_p_o = nn.Linear(hidden_size, n_classes)
 
-    def aggregate_atom_h(self, atom_h, scope):
+    def _aggregate_atom_h(self, atom_h, scope):
         mol_h = []
         for (st, le) in enumerate(scope):
             cur_atom_h = atom_h.narrow(0, st, len(le['atoms']))
@@ -59,6 +63,19 @@ class PropPredictor(pl.LightningModule):
                 assert(False)
         mol_h = torch.stack(mol_h, dim=0)
         return mol_h
+    
+    def _compute_acc(self, input_probs, target, n_classes=1):
+        if n_classes > 1:
+            preds = np.argmax(input_probs, axis=1)
+            acc = np.mean(preds == target)
+        else:
+            preds = (input_probs > 0.5).astype(int)
+            acc = np.mean(preds == target)
+        return acc
+
+    def _compute_auc(self, input_probs, target):
+        auc = metrics.roc_auc_score(y_true=target, y_score=input_probs)
+        return auc
 
     def forward(self, mol_graph, stats_tracker, output_attn=False):
         attn_list = None
@@ -68,7 +85,7 @@ class PropPredictor(pl.LightningModule):
         #    atom_h = self.model(mol_graph, stats_tracker)
 
         scope = mol_graph.mols
-        mol_h = self.aggregate_atom_h(atom_h, scope)
+        mol_h = self._aggregate_atom_h(atom_h, scope)
         mol_h = nn.ReLU()(self.W_p_h(mol_h))
         mol_o = self.W_p_o(mol_h)
 
@@ -76,7 +93,7 @@ class PropPredictor(pl.LightningModule):
             return mol_o
         else:
             return mol_o, attn_list
-    
+                
     def step(self, batch, batch_idx):
         smiles_list, labels_list, path_tuple = batch
         path_input, path_mask = path_tuple
@@ -95,41 +112,79 @@ class PropPredictor(pl.LightningModule):
                              batch_idx)
         
         pred_logits = self(mol_graph, stats_tracker=None).squeeze(1)
-        labels = torch.tensor(labels_list)
-        if self.on_gpu:
-            labels = labels.cuda()
+        labels = torch.tensor(labels_list, device='cuda')
+        
+        if self.hparams.loss_type == 'ce':  # memory issues
+            self.all_pred_logits.append(pred_logits)
+            self.all_labels.append(labels)
 
-        if False:#self.hparams.loss_type == 'ce':  # memory issues
-            all_pred_logits.append(pred_logits)
-            all_labels.append(labels)
-
-        if True:#self.hparams.loss_type == 'mse' or self.hparams.loss_type == 'mae':
+        if self.hparams.loss_type == 'mse' or self.hparams.loss_type == 'mae':
             loss = nn.MSELoss()(input=pred_logits, target=labels)
         elif self.hparams.loss_type == 'ce':
             pred_probs = nn.Sigmoid()(pred_logits)
             loss = nn.BCELoss()(pred_probs, labels)
         else:
+            print("Improper Loss Type")
             assert(False)
             
         #labels_hat = torch.argmax(labels, dim=0)
         #stats_tracker.add_stat('loss', loss.item() * n_data, n_data)
+
         loss = loss / self.hparams.batch_splits
+        
         acc = torch.sum(
             pred_logits == labels
         ).item() / (n_data * 1.0)
-        return loss, acc, (smiles_list, labels_list, pred_logits)
+        return loss, acc, loss, (smiles_list, labels_list, pred_logits)
+    
+    def on_epoch_start(self):
+        self.all_pred_logits, self.all_labels = [], []
+    
+    def on_epoch_end(self):
+        if self.hparams.loss_type == 'ce':
+            self.all_pred_logits = torch.cat(self.all_pred_logits, dim=0)
+            self.all_labels = torch.cat(self.all_labels, dim=0)
+            pred_probs = nn.Sigmoid()(self.all_pred_logits).detach().cpu().numpy()
+            self.all_labels = self.all_labels.detach().cpu().numpy()
+            acc = self._compute_acc(pred_probs, self.all_labels)
+            auc = self._compute_auc(pred_probs, self.all_labels)
+            self.logger.experiment.log_metric('acc', acc,
+                                              epoch=self.current_epoch)
+            self.logger.experiment.log_metric('auc', auc,
+                                              epoch=self.current_epoch)
+            logger_logs = {"loss": auc, "acc": acc}
+            self.all_pred_logits, self.all_labels = [], []
+            return {
+                "loss":auc, 
+                "progress_bar": logger_logs, 
+                "log": logger_logs
+            }
+        else:
+            return
     
     def training_step(self, batch, batch_idx):
-        loss, _, _ = self.step(batch, batch_idx)
+        loss, _, mae, _ = self.step(batch, batch_idx)
         
         self.logger.experiment.log_metric('train_loss', loss.detach().cpu(),
                                           step=batch_idx, 
                                           epoch=self.current_epoch)
+        
+        self.logger.experiment.log_metric('train_mae', mae.detach().cpu(),
+                                          step=batch_idx, 
+                                          epoch=self.current_epoch)
 
-        return {'loss':loss}
+        if self.hparams.loss_type in ['mae', 'mse']:   
+            logger_logs = {"loss": loss, "train_mae": mae}
+        else:
+            logger_logs = {"loss": loss}
+        return {
+            'loss':loss,
+            "progress_bar": logger_logs, 
+            "log": logger_logs
+        }
     
     def validation_step(self, batch, batch_idx):
-        loss, acc, (smiles_list, labels_list, pred_logits) = self.step(batch, batch_idx)
+        loss, acc, mae, (smiles_list, labels_list, pred_logits) = self.step(batch, batch_idx)
 
         write_path = f'data/05_model_output/{self.hparams.data.split("/")[-1]}_{self.hparams.experiment_label}-valid_{self.current_epoch}'
         if write_path is not None:
@@ -143,10 +198,15 @@ class PropPredictor(pl.LightningModule):
         self.logger.experiment.log_metric('val_acc', acc,
                                           step=batch_idx, 
                                           epoch=self.current_epoch)
+        
+        self.logger.experiment.log_metric('val_mae', mae.detach().cpu(),
+                                          step=batch_idx, 
+                                          epoch=self.current_epoch)
 
         return {
-            'val_loss':loss, 
-            'val_acc': torch.tensor(acc)#,
+            'val_loss': loss, 
+            'val_acc': torch.tensor(acc),
+            'val_mae': mae
             #'smiles_list': smiles_list, 
             #'labels_list': labels_list,
             #'pred_logits': pred_logits
@@ -156,16 +216,17 @@ class PropPredictor(pl.LightningModule):
         # OPTIONAL
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_acc"] for x in outputs]).mean()
+        mae = torch.stack([x["val_mae"] for x in outputs]).mean()
         """(smiles_list, labels_list, pred_logits) = outputs['smiles_list'],\
                                                 outputs['labels_list'],
                                                 outputs['pred_logits']"""
         
         
-        logger_logs = {"val_acc": avg_acc, "val_loss": avg_loss}
+        logger_logs = {"val_acc": avg_acc, "val_loss": avg_loss, "val_mae": mae}
         return {'avg_val_loss': avg_loss, "progress_bar": logger_logs, "log": logger_logs}
     
     def test_step(self, batch, batch_idx):
-        loss, acc, _ = self.step(batch, batch_idx)
+        loss, acc, mae, _ = self.step(batch, batch_idx)
         
         self.logger.experiment.log_metric('test_loss', loss.detach().cpu(),
                                           step=batch_idx, 
@@ -173,13 +234,20 @@ class PropPredictor(pl.LightningModule):
         self.logger.experiment.log_metric('test_acc', acc,
                                           step=batch_idx, 
                                           epoch=self.current_epoch)
+        self.logger.experiment.log_metric('test_mae', mae.detach().cpu(),
+                                          step=batch_idx, 
+                                          epoch=self.current_epoch)
 
-        return {'test_loss':loss, 'test_acc': torch.tensor(acc)}
+        return {'test_loss':mae, 'test_acc': torch.tensor(acc), 'val_mae':mae}
     
     def test_end(self, outputs):
         # OPTIONAL
         avg_loss = torch.stack([x['test_loss'] for x in outputs]).mean()
-        return {'avg_test_loss': avg_loss}
+        mae = torch.stack([x['test_mae'] for x in outputs]).mean()
+        
+        logger_logs = {"test_mae": mae}
+        
+        return {'avg_test_loss': avg_loss, 'test_mae': mae}
     
     def configure_optimizers(self):
         # REQUIRED
@@ -189,10 +257,16 @@ class PropPredictor(pl.LightningModule):
         
     @pl.data_loader
     def train_dataloader(self):
+        split_idx = self.split_idx
         # REQUIRED
         train_dir = os.path.join(self.hparams.data, 'train')
-        split_idx=0
-        raw_data = read_smiles_from_file('%s/raw.csv' % self.hparams.data)
+        if self.hparams.multi:
+            raw_data = read_smiles_multiclass('%s/raw.csv' % self.hparams.data)
+            n_classes = len(raw_data[0][1])
+            print(f'N_Classes: {n_classes}')
+        else:
+            raw_data = read_smiles_from_file('%s/raw.csv' % self.hparams.data)
+            n_classes = 1
         data_splits = read_splits('%s/split_%d.txt' % (self.hparams.data, split_idx))
         train_dataset = get_loader(raw_data, 
                                    data_splits['train'], 
@@ -226,7 +300,13 @@ class PropPredictor(pl.LightningModule):
         val_dir = os.path.join(self.hparams.data, 'valid')
         
         split_idx=0
-        raw_data = read_smiles_from_file('%s/raw.csv' % self.hparams.data)
+        if self.hparams.multi:
+            raw_data = read_smiles_multiclass('%s/raw.csv' % self.hparams.data)
+            n_classes = len(raw_data[0][1])
+        else:
+            raw_data = read_smiles_from_file('%s/raw.csv' % self.hparams.data)
+            n_classes = 1
+            
         data_splits = read_splits('%s/split_%d.txt' % (self.hparams.data, split_idx))
         
         val_dataset = get_loader(raw_data, 
@@ -256,7 +336,12 @@ class PropPredictor(pl.LightningModule):
         test_dir = os.path.join(self.hparams.data, 'test')
         
         split_idx=0
-        raw_data = read_smiles_from_file('%s/raw.csv' % self.hparams.data)
+        if self.hparams.multi:
+            raw_data = read_smiles_multiclass('%s/raw.csv' % self.hparams.data)
+            n_classes = len(raw_data[0][1])
+        else:
+            raw_data = read_smiles_from_file('%s/raw.csv' % self.hparams.data)
+            n_classes = 1
         data_splits = read_splits('%s/split_%d.txt' % (self.hparams.data, split_idx))
         
         test_dataset = get_loader(raw_data, 
@@ -299,16 +384,19 @@ class PropPredictor(pl.LightningModule):
         parser.add_argument('--max_path_length', default=3, type=int)
         parser.add_argument('--p_embed', default=True, type=bool)
         parser.add_argument('--ring_embed', default=True, type=bool)
+        parser.add_argument('--no_share', default=True, type=bool)
         parser.add_argument('--no_truncate', default=False, type=bool)
         parser.add_argument('--agg_func', default='sum', type=str)
         parser.add_argument('--batch_splits', type=int, default=1,
                         help='Used to aggregate batches')
+        parser.add_argument('--multi', type=bool, default=False)
         
         # training specific (for this model)
         parser.add_argument('--epochs', default=100, type=int, metavar='N',
                             help='number of total epochs to run')
         parser.add_argument('--seed', type=int, default=42,
                             help='seed for initializing training. ')
+        parser.add_argument('--loss_type', default='mae', type=str)
         parser.add_argument('--max_nb_epochs', default=2, type=int)
         parser.add_argument('--lr', '--learning-rate', default=5e-4, type=float,
                             metavar='LR', help='initial learning rate', 
@@ -322,6 +410,7 @@ class PropPredictor(pl.LightningModule):
                             action='store_true', help='use pre-trained model')
         parser.add_argument('--experiment_label', 
                             default=hash.hexdigest()[:10])
+        parser.add_argument('--n_rounds', default=10, type=int)
         
         
 

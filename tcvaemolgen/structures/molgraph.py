@@ -148,16 +148,48 @@ class MolGraph(Data):
             bgraph.append(cur_bgraph)
             b_offset += len(bonds)
 
-        fatoms = torch.tensor(np.stack(fatoms, axis=0)).float()
-        fbonds = torch.tensor(np.stack(fbonds, axis=0)).float()
-        agraph = torch.tensor(np.concatenate(agraph, axis=0)).long()
-        bgraph = torch.tensor(np.concatenate(bgraph, axis=0)).long()
-        
-        if self.on_gpu:
-            fatoms = fatoms.cuda()
-            fbonds = fbonds.cuda()
-            agraph = agraph.cuda()
-            bgraph = bgraph.cuda()
+        fatoms = torch.tensor(np.stack(fatoms, axis=0), device='cuda').float()
+        fbonds = torch.tensor(np.stack(fbonds, axis=0), device='cuda').float()
+        agraph = torch.tensor(np.concatenate(agraph, axis=0), device='cuda').long()
+        bgraph = torch.tensor(np.concatenate(bgraph, axis=0), device='cuda').long()
 
         graph_inputs = [fatoms, fbonds, agraph, bgraph]
         return (graph_inputs, self.scope)
+    
+    def MolFromGraphs(node_list, adjacency_matrix):
+    
+        # create empty editable mol object
+        mol = Chem.RWMol()
+
+        # add atoms to mol and keep track of index
+        node_to_idx = {}
+        for i in range(len(node_list)):
+            a = Chem.Atom(node_list[i])
+            molIdx = mol.AddAtom(a)
+            node_to_idx[i] = molIdx
+
+        # add bonds between adjacent atoms
+        for ix, row in enumerate(adjacency_matrix):
+            for iy, bond in enumerate(row):
+
+                # only traverse half the matrix
+                if iy <= ix:
+                    continue
+
+                # add relevant bond type (there are many more of these)
+                if bond == 0:
+                    continue
+                elif bond == 1:
+                    bond_type = Chem.rdchem.BondType.SINGLE
+                    mol.AddBond(node_to_idx[ix], node_to_idx[iy], bond_type)
+                elif bond == 2:
+                    bond_type = Chem.rdchem.BondType.DOUBLE
+                    mol.AddBond(node_to_idx[ix], node_to_idx[iy], bond_type)
+
+        # Convert RWMol to Mol object
+        mol = mol.GetMol()            
+
+        return mol
+    
+    def SMILESFromGraph(node_list, adjacency_matrix):
+        return Chem.MolToSmiles(MolFromGraphs(nodes, a))

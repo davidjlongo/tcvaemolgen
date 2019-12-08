@@ -42,12 +42,25 @@ class MoleculeTransformer(pl.LightningModule):
                                   out_features=hparams.n_heads * hparams.d_k, 
                                   bias=False)
         """Atom Attention Scores"""
-        self.W_attn_h = nn.Linear(in_features=n_score_feats, 
-                                  out_features=hparams.d_k)
-        self.W_attn_o = nn.Linear(in_features=hparams.d_k, out_features=1)
-        """Atom Embedding"""
-        self.W_message_h = nn.Linear(in_features=n_score_feats, 
-                                     out_features=hparams.d_k)
+        if self.hparams.no_share:
+            self.W_attn_h = nn.ModuleList([
+                nn.Linear(in_features=n_score_feats, out_features=hparams.d_k) \
+                     for _ in range(self.hparams.depth - 1)])
+            self.W_attn_o = nn.ModuleList([
+                nn.Linear(in_features=hparams.d_k, out_features=1) \
+                     for _ in range(self.hparams.depth - 1)])
+            """Atom Embedding"""
+            self.W_message_h = nn.ModuleList([
+                nn.Linear(in_features=n_score_feats, 
+                                        out_features=hparams.d_k) \
+                     for _ in range(self.hparams.depth - 1)])
+        else:
+            self.W_attn_h = nn.Linear(in_features=n_score_feats, 
+                                    out_features=hparams.d_k)
+            self.W_attn_o = nn.Linear(in_features=hparams.d_k, out_features=1)
+            """Atom Embedding"""
+            self.W_message_h = nn.Linear(in_features=n_score_feats, 
+                                        out_features=hparams.d_k)
         
         self.W_atom_o = nn.Linear(n_atom_feats + \
                                     hparams.n_heads * \
@@ -66,7 +79,7 @@ class MoleculeTransformer(pl.LightningModule):
 
     def _compute_attn_probs(self, attn_input, attn_mask, layer_idx, eps=1e-20):
         # attn_scores is [batch, atoms, atoms, 1]
-        if False:#self.hparams.no_share:
+        if self.hparams.no_share:
             attn_scores = nn.LeakyReLU(0.2)(
                 self.W_attn_h[layer_idx](attn_input))
             attn_scores = self.W_attn_o[layer_idx](attn_scores) * attn_mask
@@ -131,17 +144,15 @@ class MoleculeTransformer(pl.LightningModule):
             n_atoms = length
             n_padding = max_atoms - length
 
-            mask = torch.ones([n_atoms])
-            if self.on_gpu:
-                mask = mask.cuda()
+            mask = torch.ones([n_atoms], device='cuda')
 
             if n_padding > 0:
-                z_padding = torch.zeros([n_padding])
-                z_pad_feats = torch.zeros([n_padding, n_features])
+                z_padding = torch.zeros([n_padding], device='cuda')
+                z_pad_feats = torch.zeros([n_padding, n_features], device='cuda')
                 
-                if self.on_gpu:
-                    z_padding = z_padding.cuda()
-                    z_pad_feats = z_pad_feats.cuda()
+                #if self.on_gpu:
+                #    z_padding = z_padding.cuda()
+                #    z_pad_feats = z_pad_feats.cuda()
                     
                 mask = torch.cat(
                     [mask.cuda(), z_padding.cuda()]).cuda()
@@ -236,7 +247,7 @@ class MoleculeTransformer(pl.LightningModule):
             nei_scores.append(self._compute_nei_score(attn_probs, path_mask))
             attn_probs = self.dropout(attn_probs)
 
-            if False:#self.hparams.no_share:
+            if self.hparams.no_share:
                 attn_h = self.W_message_h[layer_idx](
                     torch.sum(attn_probs * attn_input, dim=2))
             else:
