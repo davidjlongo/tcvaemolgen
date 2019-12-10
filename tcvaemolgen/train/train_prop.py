@@ -5,6 +5,7 @@ import hashlib
 import logging
 import numpy as np
 import os
+import sys
 import time
 import torch
 from applicationinsights import channel
@@ -22,7 +23,14 @@ from tcvaemolgen.utils.data import read_smiles_multiclass
 SEED = 2334
 torch.manual_seed(SEED)
 np.random.seed(SEED)
+"""
+def trace(frame, event, arg):
+    with open('stacktrace.log', 'a+') as f:
+        f.write("%s, %s:%d\n" % (event, frame.f_code.co_filename, frame.f_lineno))
+    return trace
 
+sys.settrace(trace)
+"""
 
 """Setup Azure Application Insights
  ____ _  _ ____ ____  ___ ____ __ _ ____ 
@@ -82,6 +90,7 @@ def main(hparams):
     
     comet_logger = CometLogger(
         api_key=os.environ["COMET_KEY"],
+        log_graph=True,
         project_name="tcvaemolgen",
         workspace=os.environ["COMET_WKSP"]
     )
@@ -124,6 +133,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpus', type=str, default=None)
     parser.add_argument('--nodes', type=int, default=1)
     parser.add_argument('--n_classes',type=int,default=1)
+    parser.add_argument('--n_workers',type=int,default=5)
     parser.add_argument('--save-path', metavar='DIR', default=".", type=str,
                         help='path to save output')
     parser.add_argument('--use-paths', default=True, type=bool)

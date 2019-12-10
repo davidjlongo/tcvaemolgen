@@ -1,7 +1,16 @@
 import hashlib
 import logging
+import math
+import matplotlib
+import sys
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import ImageGrid
 import numpy as np
 import os
+from PIL import Image
+import rdkit.Chem as Chem
+import rdkit.Chem.Draw as Draw
 import sklearn.metrics as metrics
 import time
 import torch
@@ -15,6 +24,9 @@ from argparse import ArgumentParser
 
 import pytorch_lightning as pl
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
 #from models.mol_conv_net import MolConvNet
 from tcvaemolgen.datasets.mol_dataset import get_loader
 from tcvaemolgen.models.transformer import MoleculeTransformer
@@ -27,6 +39,54 @@ import pdb
 
 module_log = logging.getLogger('tcvaemolgen.atom_predictor')
 
+def drawmols(smiles_list, logger, batch_idx, current_epoch, mode):
+    n_data = len(smiles_list)
+    mols = []
+    for smiles in smiles_list:
+        mols.append(Chem.MolFromSmiles(smiles))
+    img:Image = Draw.MolsToGridImage(mols,
+            molsPerRow=int(math.ceil(math.sqrt(n_data))),subImgSize=(200,200),
+            legends=[x for x in smiles_list])
+    logger.experiment.log_image(img,
+            name=f'(Epoch {current_epoch}, {mode} Batch: {batch_idx}')
+  
+def drawheatmaps(heatmaps, batch_sz, logger, step_idx, current_epoch, mode, hparams):
+    i = 65
+        
+    for heatmap in heatmaps:
+        max_atoms = list(heatmap[0].shape[0:2])[0]
+        #figsize = (batch_sz*max_atoms[0]+1,batch_sz*max_atoms[1]+1)
+        h_batch_sz = int(math.ceil(math.sqrt(batch_sz)))
+        figsize = (h_batch_sz * max_atoms, h_batch_sz * max_atoms)
+
+        if hparams.loss_type in ['mse', 'mae']:
+            figsize = (h_batch_sz * max_atoms, h_batch_sz * max_atoms)
+        else:
+            figsize = (int(math.ceil(math.sqrt(h_batch_sz))) * max_atoms, 
+                        int(math.ceil(math.sqrt(h_batch_sz)) * max_atoms))
+        
+        #print(f'figsize {figsize}')
+        #print(f'max_atoms {max_atoms}')
+        fig = plt.figure(figsize=figsize)
+        grid = ImageGrid(fig, 111,  # similar to subplot(111)
+                    nrows_ncols=(h_batch_sz, h_batch_sz),  # creates 2x2 grid of axes
+                    axes_pad=0.1,  # pad between axes in inch.
+                    )
+
+
+    for ax, im in zip(grid, heatmap.squeeze().cpu().numpy()):
+        ax.imshow(im, cmap='hot', interpolation='nearest')
+
+    fig.canvas.draw()
+    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    
+    logger.experiment.log_image(data, 
+                                name=f'Heatmap {mode} {current_epoch} {chr(i)}',
+                                step=step_idx)
+    
+    i+=1
+
 class PropPredictor(pl.LightningModule):
     def __init__(self, hparams, n_classes=1):
         super(PropPredictor, self).__init__()
@@ -34,11 +94,14 @@ class PropPredictor(pl.LightningModule):
         log.debug('Entering PropPredictor')
         self.log =  log
         self.hparams = hparams
+        self.batch_sz = self.hparams.batch_size
         print(f'LOSS_TYPE: {self.hparams.loss_type}')
         hidden_size = hparams.hidden_size
         self.n_classes = n_classes
         model = MoleculeTransformer(hparams)
         self.all_pred_logits, self.all_labels = [], []
+        if self.hparams.distributed_backend == 'dp':
+            self.tp = ThreadPoolExecutor(max_workers=12)
         
         if self.on_gpu:
             model = model.cuda()
@@ -53,12 +116,12 @@ class PropPredictor(pl.LightningModule):
         mol_h = []
         for (st, le) in enumerate(scope):
             cur_atom_h = atom_h.narrow(0, st, len(le['atoms']))
-            self.log.debug(f'CUR_ATOM_H: {cur_atom_h.shape}')
+            #self.log.debug(f'CUR_ATOM_H: {cur_atom_h.shape}')
 
             if True:#self.hparams.agg_func == 'sum':
                 mol_h.append(cur_atom_h.sum(dim=0))
-            elif self.hparams.agg_func == 'mean':
-                mol_h.append(cur_atom_h.mean(dim=0))
+            #elif self.hparams.agg_func == 'mean':
+            #    mol_h.append(cur_atom_h.mean(dim=0))
             else:
                 assert(False)
         mol_h = torch.stack(mol_h, dim=0)
@@ -77,24 +140,50 @@ class PropPredictor(pl.LightningModule):
         auc = metrics.roc_auc_score(y_true=target, y_score=input_probs)
         return auc
 
-    def forward(self, mol_graph, stats_tracker, output_attn=False):
+    def forward(self, mol_graph, step_idx, mode='None', output_attn=False):
         attn_list = None
         #if self.hparams.model_type == 'transformer':
         atom_h, attn_list = self.model(mol_graph)
         #else:
         #    atom_h = self.model(mol_graph, stats_tracker)
+        
+        #at = []
+        #for in, row in enumerate(attn_list[0].detach()):
+        #    at.append(row.squeeze().cpu().numpy())
+        
+        heatmaps = (attn_list[0].detach().clone(), attn_list[-1].detach().clone())
+        if step_idx % 100 == 0:
+            if self.hparams.distributed_backend == 'dp':
+                _ = self.tp.submit(drawheatmaps(heatmaps,
+                                            self.batch_sz,
+                                            self.logger,
+                                            step_idx,
+                                            self.current_epoch,
+                                            mode, 
+                                            self.hparams))
+            else:
+                drawheatmaps(heatmaps,
+                                            self.batch_sz,
+                                            self.logger,
+                                            step_idx,
+                                            self.current_epoch,
+                                            mode,
+                                            self.hparams)
+        
 
         scope = mol_graph.mols
         mol_h = self._aggregate_atom_h(atom_h, scope)
         mol_h = nn.ReLU()(self.W_p_h(mol_h))
         mol_o = self.W_p_o(mol_h)
+        
+        
 
         if not output_attn:
             return mol_o
         else:
             return mol_o, attn_list
                 
-    def step(self, batch, batch_idx):
+    def step(self, batch, batch_idx, mode='None'):
         smiles_list, labels_list, path_tuple = batch
         path_input, path_mask = path_tuple
         #path_input, path_mask = path_input.squeeze(0), path_mask.squeeze(0)
@@ -105,13 +194,28 @@ class PropPredictor(pl.LightningModule):
                 path_input, path_mask = path_input.cuda(), path_mask.cuda()
 
         n_data = len(smiles_list)
+        if batch_idx % 500 == 0:
+            if self.hparams.distributed_backend == 'dp':
+                _ = self.tp.submit(drawmols(smiles_list[:], 
+                                            self.logger, 
+                                            batch_idx, 
+                                            self.current_epoch,
+                                            mode))
+            else:
+                drawmols(smiles_list[:], 
+                                            self.logger, 
+                                            batch_idx, 
+                                            self.current_epoch,
+                                            mode)
+        
+        
         mol_graph = MolGraph(smiles_list, 
                              self.hparams, 
                              path_input, 
                              path_mask, 
                              batch_idx)
         
-        pred_logits = self(mol_graph, stats_tracker=None).squeeze(1)
+        pred_logits = self(mol_graph, batch_idx, mode).squeeze(1)
         labels = torch.tensor(labels_list, device='cuda')
         
         if self.hparams.loss_type == 'ce':  # memory issues
@@ -154,6 +258,12 @@ class PropPredictor(pl.LightningModule):
                                               epoch=self.current_epoch)
             logger_logs = {"loss": auc, "acc": acc}
             self.all_pred_logits, self.all_labels = [], []
+        
+        self.logger.experiment.log_epoch_end(self.current_epoch)
+        self.logger.experiment.send_notification(
+            f'Epoch {self.current_epoch} ended')
+        
+        if self.hparams.loss_type == 'ce':
             return {
                 "loss":auc, 
                 "progress_bar": logger_logs, 
@@ -163,7 +273,7 @@ class PropPredictor(pl.LightningModule):
             return
     
     def training_step(self, batch, batch_idx):
-        loss, _, mae, _ = self.step(batch, batch_idx)
+        loss, _, mae, _ = self.step(batch, batch_idx, 'Train')
         
         self.logger.experiment.log_metric('train_loss', loss.detach().cpu(),
                                           step=batch_idx, 
@@ -184,7 +294,8 @@ class PropPredictor(pl.LightningModule):
         }
     
     def validation_step(self, batch, batch_idx):
-        loss, acc, mae, (smiles_list, labels_list, pred_logits) = self.step(batch, batch_idx)
+        loss, acc, mae, (smiles_list, labels_list, pred_logits) = \
+            self.step(batch, batch_idx, 'Val')
 
         write_path = f'data/05_model_output/{self.hparams.data.split("/")[-1]}_{self.hparams.experiment_label}-valid_{self.current_epoch}'
         if write_path is not None:
@@ -226,7 +337,7 @@ class PropPredictor(pl.LightningModule):
         return {'avg_val_loss': avg_loss, "progress_bar": logger_logs, "log": logger_logs}
     
     def test_step(self, batch, batch_idx):
-        loss, acc, mae, _ = self.step(batch, batch_idx)
+        loss, acc, mae, _ = self.step(batch, batch_idx, 'T  est')
         
         self.logger.experiment.log_metric('test_loss', loss.detach().cpu(),
                                           step=batch_idx, 
@@ -238,7 +349,7 @@ class PropPredictor(pl.LightningModule):
                                           step=batch_idx, 
                                           epoch=self.current_epoch)
 
-        return {'test_loss':mae, 'test_acc': torch.tensor(acc), 'val_mae':mae}
+        return {'test_loss':mae, 'test_acc': torch.tensor(acc), 'test_mae':mae}
     
     def test_end(self, outputs):
         # OPTIONAL
@@ -289,7 +400,8 @@ class PropPredictor(pl.LightningModule):
                                    self.hparams, 
                                    shuffle=True,
                                    sampler=train_sampler, 
-                                   batch_size=self.hparams.batch_size)
+                                   batch_size=self.hparams.batch_size,
+                                   num_workers=self.hparams.n_workers)
         
         return train_loader
 
@@ -313,7 +425,8 @@ class PropPredictor(pl.LightningModule):
                                    data_splits['valid'], 
                                    self.hparams, 
                                    shuffle=True,
-                                   batch_size=self.hparams.batch_size) #TODO
+                                   batch_size=self.hparams.batch_size,
+                                   num_workers=self.hparams.n_workers) #TODO
         
         
         if self.use_ddp:
@@ -344,10 +457,11 @@ class PropPredictor(pl.LightningModule):
             n_classes = 1
         data_splits = read_splits('%s/split_%d.txt' % (self.hparams.data, split_idx))
         
-        test_dataset = get_loader(raw_data, 
-                                   data_splits['test'], 
-                                   self.hparams, 
-                                   shuffle=False) #TODO"""
+        #test_dataset = get_loader(raw_data, 
+        #                           data_splits['test'], 
+        #                           num_workers=0,
+        #                           self.hparams, 
+        #                           shuffle=False) #TODO"""
         
         if self.use_ddp:
             test_sampler = DistributedSampler(test_dataset)
@@ -357,6 +471,7 @@ class PropPredictor(pl.LightningModule):
         test_loader = get_loader(raw_data, 
                                   data_splits['test'],
                                   self.hparams,
+                                  num_workers=0,
                                   shuffle=(test_sampler is None),
                                   sampler=test_sampler)
         

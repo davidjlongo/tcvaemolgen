@@ -161,3 +161,4 @@ data/01_raw/*
 data/05*/*
 *.csv
 prep_env.sh
+profiler.txt
