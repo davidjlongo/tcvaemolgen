@@ -69,9 +69,16 @@ RUN apt-get remove -y \
         cuda-minimal-build-$CUDA_PKG_VERSION \
         libnccl-dev=$NCCL_VERSION-1+cuda10.1
 
-USER $USER
 
 #WORKDIR $HOME/app
+COPY data $HOME/app/data
+COPY tcvaemolgen $HOME/app/tcvaemolgen
+COPY scripts $HOME/app/scripts
+RUN chown $UID:$GID $HOME/app/data
+RUN chown $UID:$GID $HOME/app/tcvaemolgen
+RUN chown $UID:$GID $HOME/app/scripts
+
+USER $USER
 
 # use an entrypoint script to insure conda environment is properly activated at runtime
 ENTRYPOINT [ "/usr/local/bin/docker-entrypoint.sh" ]

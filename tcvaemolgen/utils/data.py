@@ -8,11 +8,11 @@ import torch
 from torch.utils.data import Dataset
 from typing import List, Tuple
 
-from structures.moltree import MolTree
-from structures.vocab import Vocab
-import structures.mol_features as mf
-from structures.mol_features import N_ATOM_FEATS as ATOM_FDIM_DEC
-from structures.mol_features import N_BOND_FEATS as BOND_FDIM_DEC
+from tcvaemolgen.structures.moltree import MolTree
+from tcvaemolgen.structures.vocab import Vocab
+import tcvaemolgen.structures.mol_features as mf
+from tcvaemolgen.structures.mol_features import N_ATOM_FEATS as ATOM_FDIM_DEC
+from tcvaemolgen.structures.mol_features import N_BOND_FEATS as BOND_FDIM_DEC
 #from models.modules.gcn import mol2dgl_enc
 
 _url = 'https://s3-ap-southeast-1.amazonaws.com/dgl-data-cn/dataset/jtnn.zip'

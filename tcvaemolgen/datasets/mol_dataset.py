@@ -1,8 +1,10 @@
+import argparse
 import collections
 import rdkit.Chem as Chem
+import sys
 import torch.utils.data as data
 
-from utils import path_utils
+from tcvaemolgen.utils import path_utils
 import pdb
 
 class MolDataset(data.Dataset):
@@ -35,16 +37,22 @@ class MolDataset(data.Dataset):
             path_input, path_mask = path_utils.get_path_input(
                 [mol], shortest_paths, n_atoms, self.args, output_tensor=True)
             #print(path_input.squeeze(0).shape)
-            #path_input = path_input.squeeze(0)  # Remove batch dimension
-            #path_mask = path_mask.squeeze(0)  # Remove batch dimension
+            path_input = path_input.squeeze(0)  # Remove batch dimension
+            path_mask = path_mask.squeeze(0)  # Remove batch dimension
         return smiles, label, n_atoms, (path_input, path_mask)
 
     def __len__(self):
         return len(self.data)
 
 
+class Args:
+    def __init__(self):
+        self.max_path_length = 3
+        self.p_embed = True
+        self.ring_embed = True
+
 def combine_data(data):
-    args = None
+    args = Args()
     batch_smiles, batch_labels, batch_n_atoms, batch_path = zip(*data)
 
     batch_path_inputs, batch_path_masks = zip(*batch_path)

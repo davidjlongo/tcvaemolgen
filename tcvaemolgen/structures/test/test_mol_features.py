@@ -2,10 +2,10 @@ import pytest
 
 from rdkit import Chem 
 
-from structures.mol_features import bt_index_to_float,\
+from tcvaemolgen.structures.mol_features import bt_index_to_float,\
                                     get_bt_index, mol2tensors
                                     
-from utils.test_fixtures import single_smiles, smiles_set
+from tcvaemolgen.utils.test_fixtures import single_smiles, smiles_set
 
 def test_bt_index_to_float():
     assert bt_index_to_float(0) == 1

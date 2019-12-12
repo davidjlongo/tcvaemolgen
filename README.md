@@ -1,10 +1,22 @@
-# pytorch-gpu-data-science-project
+# Stanford CS236 Final Project
+## David Longo - T-CVAE-MolGen
 
-Repository containing scaffolding for a Python 3-based data science project with GPU acceleration using the [PyTorch](https://pytorch.org/) ecosystem. 
+Repository containing a [pyTorch Lightning](https://github.com/williamFalcon/pytorch-lightning) port of the [Path Augmented Graph Transformer Network](https://arxiv.org/abs/1905.12712) paper by [Chen](https://www.csail.mit.edu/person/benson-chen), [Barzilay](https://people.csail.mit.edu/regina/), and [Jaakkola](http://people.csail.mit.edu/tommi/).
+
+>Chen, B.S., Barzilay, R., & Jaakkola, T.S. (2019). Path-Augmented Graph Transformer Network. ArXiv, abs/1905.12712.
 
 ## Creating a new project from this template
 
 Simply follow the [instructions](https://help.github.com/en/articles/creating-a-repository-from-a-template) to create a new project repository from this template.
+
+## Todo:
+
+- [x] Implement Path Augmented Graph Transformer Network in PyTorch Lightning
+- [ ] Complete implementation in PyTorch-Geometric
+- [x] Run algorithm on QM7
+- [x] Run algorithm on QM8
+- [x] Run algorithm on QM9
+- [x] Run algorithm on BACE
 
 ## Project organization
 

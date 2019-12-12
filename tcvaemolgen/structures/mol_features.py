@@ -12,7 +12,7 @@ import itertools
 import rdkit.Chem as Chem
 import torch as torch
 from typing import Any, Dict, List, Set
-from utils.chem import get_clique_mol, tree_decomp
+from tcvaemolgen.utils.chem import get_clique_mol, tree_decomp
 
 # The default valid symbols for atom features
 SYMBOLS: List[str] = [

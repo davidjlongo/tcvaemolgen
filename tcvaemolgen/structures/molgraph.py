@@ -11,7 +11,7 @@ from torch_geometric.data import Data
 from torch_geometric.utils import subgraph
 import os,sys,inspect
 sys.path.insert(0,'/home/icarus/app/src') 
-from utils.chem import get_clique_mol, tree_decomp, get_mol, get_smiles, \
+from tcvaemolgen.utils.chem import get_clique_mol, tree_decomp, get_mol, get_smiles, \
                        set_atommap, enum_assemble_nx, decode_stereo
 
 from .mol_features import get_atom_features, get_bond_features, mol2tensors, \

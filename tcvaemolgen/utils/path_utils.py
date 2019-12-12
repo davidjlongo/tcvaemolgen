@@ -3,7 +3,7 @@ import logging
 import numpy as np
 import rdkit.Chem as Chem
 
-import structures.mol_features as mol_features
+import tcvaemolgen.structures.mol_features as mol_features
 import pdb
 
 module_log = logging.getLogger('tcvaemolgen.utils.path_utils')
@@ -80,13 +80,16 @@ def merge_path_inputs(path_inputs, path_masks, max_atoms, args=None):
     padded_mask = torch.zeros(mask_shape)
 
     for idx, path_input in enumerate(path_inputs):
-        path_input = path_input.squeeze(0)
-        #if type(path_input) is not torch.Tensor:
-        #    path_input = torch.Tensor(path_input)
+        #path_input = path_input.squeeze(0)
+        if type(path_input) is not torch.Tensor:
+            path_input = torch.Tensor(path_input).float()
         n_atoms = path_input.size()[0]
         padded_path_inputs[idx, :n_atoms, :n_atoms] = path_input
-        path_mask_idx = path_masks[idx].squeeze(0)
-        path_mask = torch.Tensor(path_mask_idx.float())
+        #path_mask_idx = path_masks[idx].squeeze(0)
+        if type(path_masks[idx]) is not torch.Tensor:
+            path_mask = torch.Tensor(path_masks[idx])
+        else:
+            path_mask = path_masks[idx]
         padded_mask[idx, :n_atoms, :n_atoms] = path_mask
     padded_mask = padded_mask
     return padded_path_inputs, padded_mask
@@ -94,17 +97,10 @@ def merge_path_inputs(path_inputs, path_masks, max_atoms, args=None):
 
 def get_num_path_features(args=None):
     """Returns the number of path features for the model."""
-    num_features = mol_features.N_BOND_FEATS
-    if args is not None:
-        num_features *= args.max_path_length 
-    else:
-        num_features *= 3
-    if True:#args.p_embed:
-        if args is not None:
-            num_features += args.max_path_length + 2
-        else:
-            num_features += 3 + 2
-    if True:#args.ring_embed:
+    num_features = args.max_path_length * mol_features.N_BOND_FEATS
+    if args is not None and args.p_embed:
+        num_features += args.max_path_length + 2
+    if args is not None and args.ring_embed:
         n_ring_feats = 1  # Same ring membership
         n_ring_feats += 4  # Same ring non/aromatic 5 or 6
         num_features += n_ring_feats

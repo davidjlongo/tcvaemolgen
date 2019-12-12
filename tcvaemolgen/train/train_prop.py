@@ -90,6 +90,7 @@ def main(hparams):
     
     comet_logger = CometLogger(
         api_key=os.environ["COMET_KEY"],
+        experiment_name=f'{hparams.dataset}-{str(time.time())}',
         log_graph=True,
         project_name="tcvaemolgen",
         workspace=os.environ["COMET_WKSP"]
@@ -101,7 +102,7 @@ def main(hparams):
         default_save_path=f'data/05_model_outputs/{hparams.dataset}',
         distributed_backend=hparams.distributed_backend,
         max_nb_epochs=hparams.max_nb_epochs,
-        #.arly_stop_callback=None,
+        early_stop_callback=None,
         gpus=hparams.gpus,
         gradient_clip_val=10,
         nb_gpu_nodes=hparams.nodes,

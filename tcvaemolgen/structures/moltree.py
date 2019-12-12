@@ -16,7 +16,7 @@ from typing import Dict
 
 from rdkit import Chem
 from torch_geometric.data import Data
-from utils.chem import get_clique_mol, tree_decomp, get_mol, get_smiles, \
+from tcvaemolgen.utils.chem import get_clique_mol, tree_decomp, get_mol, get_smiles, \
                        set_atommap, enum_assemble_nx, decode_stereo
 
 from .mol_features import get_atom_features, get_bond_features, mol2tensors

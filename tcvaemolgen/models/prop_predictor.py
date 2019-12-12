@@ -74,18 +74,20 @@ def drawheatmaps(heatmaps, batch_sz, logger, step_idx, current_epoch, mode, hpar
                     )
 
 
-    for ax, im in zip(grid, heatmap.squeeze().cpu().numpy()):
-        ax.imshow(im, cmap='hot', interpolation='nearest')
+        for ax, im in zip(grid, heatmap.squeeze().cpu().numpy()):
+            ax.imshow(im, cmap='hot', interpolation='nearest')
 
-    fig.canvas.draw()
-    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    
-    logger.experiment.log_image(data, 
-                                name=f'Heatmap {mode} {current_epoch} {chr(i)}',
-                                step=step_idx)
-    
-    i+=1
+        fig.canvas.draw()
+        data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+        data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        
+        plt.close(fig)
+        
+        logger.experiment.log_image(data, 
+                                    name=f'Heatmap {mode} {current_epoch} {chr(i)}',
+                                    step=step_idx)
+        
+        i+=1
 
 class PropPredictor(pl.LightningModule):
     def __init__(self, hparams, n_classes=1):
@@ -151,7 +153,7 @@ class PropPredictor(pl.LightningModule):
         #for in, row in enumerate(attn_list[0].detach()):
         #    at.append(row.squeeze().cpu().numpy())
         
-        heatmaps = (attn_list[0].detach().clone(), attn_list[-1].detach().clone())
+        heatmaps = [x.detach().clone() for x in attn_list]
         if step_idx % 100 == 0:
             if self.hparams.distributed_backend == 'dp':
                 _ = self.tp.submit(drawheatmaps(heatmaps,
@@ -216,7 +218,7 @@ class PropPredictor(pl.LightningModule):
                              batch_idx)
         
         pred_logits = self(mol_graph, batch_idx, mode).squeeze(1)
-        labels = torch.tensor(labels_list, device='cuda')
+        labels = torch.tensor(labels_list, device='cuda').squeeze()
         
         if self.hparams.loss_type == 'ce':  # memory issues
             self.all_pred_logits.append(pred_logits)
@@ -457,11 +459,11 @@ class PropPredictor(pl.LightningModule):
             n_classes = 1
         data_splits = read_splits('%s/split_%d.txt' % (self.hparams.data, split_idx))
         
-        #test_dataset = get_loader(raw_data, 
-        #                           data_splits['test'], 
-        #                           num_workers=0,
-        #                           self.hparams, 
-        #                           shuffle=False) #TODO"""
+        test_dataset = get_loader(raw_data, 
+                                   data_splits['test'], 
+                                   self.hparams, 
+                                   num_workers=0,
+                                   shuffle=False) #TODO"""
         
         if self.use_ddp:
             test_sampler = DistributedSampler(test_dataset)

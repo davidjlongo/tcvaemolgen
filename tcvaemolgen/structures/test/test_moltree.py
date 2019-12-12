@@ -1,8 +1,7 @@
 import pytest
 
-from structures.moltree import MolTree
-
-from utils.test_fixtures import single_smiles, smiles_set
+from tcvaemolgen.structures.moltree import MolTree
+from tcvaemolgen.utils.test_fixtures import single_smiles, smiles_set
         
 def test_node_construction(single_smiles):
     mt = MolTree(single_smiles)

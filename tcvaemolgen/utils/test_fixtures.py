@@ -12,5 +12,4 @@ def smiles_set():
         'CC(CC(=O)[O-])O',                      # 2-Ketobutyrate
         'CC12CCC3C(C1CCC2O)CCC4=CC(=O)CCC34C'   # Testosterone
     ]
-    for s in smiles:
-        yield s
+    yield smiles

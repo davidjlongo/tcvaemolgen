@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from typing import Tuple
 
-from utils.chem import get_mol
+from tcvaemolgen.utils.chem import get_mol
 
 import structures.mol_features as mf
 from structures import mol_features
