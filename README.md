@@ -17,6 +17,11 @@ Simply follow the [instructions](https://help.github.com/en/articles/creating-a-
 - [x] Run algorithm on QM8
 - [x] Run algorithm on QM9
 - [x] Run algorithm on BACE
+- [x] Run algorithm on SOL
+- [x] Run algorithm on Lipo
+- [x] Run algorithm on BBBP
+- [x] Run JTNN algorithm (NOTE: FAILED CODE REMOVED)
+- [] Reimplement JTNN algorithm for molecule generation
 
 ## Project organization
 
